@@ -1,0 +1,9 @@
+# ignore Gemfile.lock
+Gemfile.lock
+
+# Ignore all logfiles and tempfiles.
+file/*
+log/*
+tmp/*
+!.keep
+
