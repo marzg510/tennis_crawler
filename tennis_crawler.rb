@@ -1,17 +1,12 @@
 require 'logger'
 require 'mechanize'
-require 'csv'
-require './file_saver.rb'
-
-def load_conf(file)
-  mod = Module.new
-  mod.module_eval File.read(file)
-  mod
-end
+require 'json'
+require './page_saver.rb'
+require './config_loader.rb'
 
 ############## Initialize
-conf = load_conf('crawler.conf')
-CSV_OUTDIR = conf::CSV_OUT_DIR || 'file/csv'
+conf = ConfigLoader.load('crawler.conf')
+JSON_OUTDIR = conf::JSON_OUT_DIR || 'file/json'
 HTML_OUTDIR = conf::HTML_OUT_DIR || 'file/html'
 logdir = conf::LOG_DIR || 'log'
 #$log = Logger.new("#{logdir}/#{File.basename(__FILE__)}.log",'daily')
@@ -24,111 +19,74 @@ agent = Mechanize.new
 agent.user_agent_alias = conf::USER_AGENT_ALIAS || 'Windows IE 10'
 agent.log = $log
 
-def save_page(page,seq=nil)
-  pre_seq="#{seq && "#{seq}_"}"
-  filename = "#{HTML_OUTDIR}/#{pre_seq}#{page.filename}"
-  saved_filename = page.save!("#{filename}")
-  $log.info "Page #{page.uri} saved to #{saved_filename}"
-end
-
-def save_file(file)
-  filename = "#{CSV_OUTDIR}/#{file.filename}"
-  saved_filename = file.save!("#{filename}")
-  $log.info "File #{file.uri} saved to #{saved_filename}"
-end
+html_saver = PageSaver.new(:outdir=>HTML_OUTDIR,:log=>$log)
 
 ############# **** page
 $log.info "Getting **** page"
 url = 'http://www.espn.com/tennis/player/results/_/id/1035/kei-nishikori'
 page = agent.get(url)
-save_page(page)
-$log.debug page
-$log.debug page.class
-exit
-############# login
-$log.info "Start login"
-form = login_page.forms[0]
-form.j_username=username
-form.j_password=password
-top_page = form.submit
-save_page(top_page,2)
+html_saver.save(page)
+#$log.debug page
 
-############# login check
-caution = top_page.search('p.caution-top')
-if !caution.empty?
-  $log.error "login error : #{caution.text.strip}"
-  exit
-end
+$log.info "converting result table to json"
+player = page.at('div#my-players-table').at('div.player-stats').text.split[0..1].join(' ')
+$log.debug "player=#{player}"
+tour_head = page.at('//h4[contains(text(),"TOURNAMENTS")]')
+$log.info tour_head.text
+year = tour_head.text.split[0]
+ts_top = tour_head.parent.parent
 
-############# member page
-$log.info "Getting member page"
-member_page = top_page.link_with(:href=>/member/).click
-save_page(member_page,3)
-
-############# call detail page
-$log.info "Getting call detail page"
-call_page = member_page.link_with(:href=>/calldetail/).click
-save_page(call_page,4)
-$log.info "Getting call detail list page"
-call_list_page = call_page.forms[0].submit
-save_page(call_list_page,5)
-
-######### download call usage
-$log.info "Downloading call usage"
-form = call_list_page.forms[0]
-csv = form.click_button(form.button_with(:name=>/lastmonth/))
-save_file(csv)
-
-######### data usage page
-$log.info "Getting data usage page"
-url = '/service/setup/hdd/viewdata/'
-data_page = agent.get(url)
-save_page(data_page,6)
-
-######### download data usage(convert table to csv)
-$log.info "Downloading data usage"
-data_usage_page = data_page.form_with(:name=>'lteViewDataForm').submit
-save_page(data_usage_page,7)
-
-outfile="#{CSV_OUTDIR}/data_usage_#{Date.today.strftime('%Y%m%d')}.csv"
-$log.info "converting table to csv"
-table = data_usage_page.search('table.base2')
-CSV.open(outfile,"w") do |csv|
-  table.search('tr').each_with_index do |tr,i|
-    row = tr.search('td').map do |td|
-      td.text.strip.encode(data_usage_page.encoding)
-    end
-    csv << row
+tour_details = ts_top.search('div.game-details')
+tournaments = []
+tour_details.each_with_index do |t,i|
+  # replace br to TAB
+  p=t.at('p')
+  p.search('br').each do |br|
+    br.replace('\t')
   end
-end
-$log.info "data usage saved to #{outfile}"
-
-######### download bill
-$log.info "Getting bill page"
-url = '/customer/bill/'
-bill_page = agent.get(url)
-save_page(bill_page,8)
-
-$log.info "Downloading bill"
-#agent.log.level = Logger::DEBUG
-form = bill_page.forms[0]
-bill_detail = form.click_button(form.buttons[-1])
-save_page(bill_detail,9)
-
-$log.info "converting bill table to csv"
-tables = bill_detail.search('table.base2')
-ym = tables[0].search('tr').search('td.data2-c').text.scan(/[0-9]+/).join
-outfile="#{CSV_OUTDIR}/bill_#{ym}.csv"
-CSV.open(outfile,"w") do |csv|
-  tables.each do |table|
-    table.search('tr').each_with_index do |tr,i|
-      row = tr.search('td').map do |td|
-        td.text.strip.encode(data_usage_page.encoding,:invalid=>:replace,:undef=>:replace,:replace=>'')
-      end
-      csv << row
+  # search table
+  table = t.parent.next
+  matches = []
+  game_type = nil
+  table.search('tr').each do |tr|
+#    puts "tr=#{tr}"
+    if tr.attribute('class').value == 'total' then
+      game_type = tr.text
+    elsif tr.attribute('class').value == 'colhead' then
+    else
+      tds = tr.search('td')
+      round = tds[0].text
+      opponent = tds[1].text
+      result = tds[2].text
+      scores = tds[3].text.split(',').map{|t| t.strip}
+      match = {:round => round,
+               :opponent => opponent,
+               :result => result,
+               :scores => scores
+              }
+      matches << match
     end
   end
+  tournament = {:detail_url=>p.at('a').attribute('href').text,
+                :name=>p.at('a').text,
+                :place=>p.text.split('\t')[0],
+                :period=>p.text.split('\t')[1],
+                :game_type=>game_type,
+                :matches=>matches,
+                }
+  tournaments << tournament
 end
-$log.info "bill saved to #{outfile}"
+
+player_result = {
+  :player => player,
+  :year => year,
+  :tournaments => tournaments,
+}
+
+#puts tournaments
+
+File.write(File.join(JSON_OUTDIR,"#{player.split.join}_#{year}.json"),
+           JSON.pretty_generate(player_result)
+          )
+
 $log.info File.basename(__FILE__)+' end'
-
