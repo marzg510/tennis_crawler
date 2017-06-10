@@ -21,6 +21,7 @@ class PageSaver
     prefix="#{filename_prefix && "#{filename_prefix}_"}"
     filename = filename || "#{prefix}#{page.filename}"
     file_full_name = File.join(outdir,filename)
+    FileUtils.mkdir_p(outdir) unless Dir.exist?(outdir)
     case @mode
     when Mode::RAW then
       @saved_filename = page.save!(file_full_name)
@@ -36,6 +37,8 @@ class PageSaver
       end
       open(file_full_name,'w').write(doc)
       @saved_filename = file_full_name
+    else
+      raise "mode is invalid:#{@mode}"
     end
     @log.info "#{page.uri} saved to #{@saved_filename}"
   end
