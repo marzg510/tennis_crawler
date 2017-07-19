@@ -43,4 +43,21 @@ id = 1035
     exit 9
   end
 end
+
+$log.info "Getting player page"
+url = "http://www.espn.com/tennis/player/_/id/#{id}/"
+begin
+  page = agent.get(url)
+  html_saver.save(page, :filename=>"player_#{id}.html")
+rescue Timeout::Error => e
+  $log.warn {e}
+  $log.warn {"timeout occured,retry"}
+  retry
+rescue => e
+  $log.fatal {"Exception Occured at get url !"}
+  $log.fatal {e}
+  $log.info {"#{File.basename(__FILE__)} abnormal end"}
+  exit 9
+end
+
 $log.info {"#{File.basename(__FILE__)} normal end"}
