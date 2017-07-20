@@ -55,10 +55,6 @@ rows.each do |r|
   $log.info "Getting #{name}'s Ranking History"
   ranking_history_page = get_page(url)
   html_saver.save(ranking_history_page, :filename=>"atp_player_ranking_history_#{name.split.join}.html")
-  # > li:nth-child(7) > a
-  #//*[@id="profileTabs"]/ul/li[7]/a
-  break
 end
-#:nth-child(1) > td.player-cell > a)
-#winLossTableContent > tr:nth-child(1) > td.player-cell > a
+
 $log.info {"#{File.basename(__FILE__)} normal end"}
